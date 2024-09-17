@@ -7,6 +7,7 @@ from flask import request, Response, jsonify
 from beancount.core.inventory import Inventory  # type: ignore
 from beanquery.query import run_query  # type: ignore
 from fava.application import render_template_string
+from fava.core.inventory import SimpleCounterInventory
 from fava.beans.abc import Directive
 from fava.beans.abc import Price
 from fava.beans.abc import Transaction
@@ -15,6 +16,7 @@ from fava.core import FavaLedger
 from fava.core.conversion import simple_units
 from fava.ext import FavaExtensionBase, extension_endpoint
 from fava.helpers import FavaAPIError
+from decimal import Decimal
 
 ExtConfig = namedtuple("ExtConfig", ["dashboards_path"])
 
@@ -88,6 +90,22 @@ class FavaDashboards(FavaExtensionBase):
             if "bql" in query:
                 bql = self.render_template(ctx, query["bql"])
                 query["result_types"], query["result"] = self.exec_query(bql)
+            if "journal" in query:
+                entries = g.ledger.account_journal(
+                    g.filtered,
+                    query["journal"],
+                    g.conversion,
+                    with_children=g.ledger.fava_options.account_journal_include_children,
+                )
+                query["result_types"] = [("date", datetime.date), ("balance", Decimal)]
+                query["result"] = []
+                for entry in entries:
+                    if isinstance(entry[0], Transaction) and isinstance(entry[2], SimpleCounterInventory):
+                        query["result_types"] = [
+                            ("date", datetime.date),
+                            ("balance", Decimal),
+                        ]
+                        query["result"].append(namedtuple("ResultRow", ["date", "balance"])(entry[0].date, entry[2].get("USD", Decimal("0"))))
 
     def process_jinja2(self, ctx: PanelCtx):
         if ctx.panel.get("type") != "jinja2":
